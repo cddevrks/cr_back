@@ -141,20 +141,24 @@ const taskSchema = new mongoose.Schema({
 
 const Task = mongoose.model("Task", taskSchema);
 
-// Leaderboard Schema
+// Update the Leaderboard Schema
 const leaderboardSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  email: { type: String, ref: "User", required: true, unique: true },
   points: { type: Number, default: 0 },
-  submissions: [
-    {
-      taskId: { type: mongoose.Schema.Types.ObjectId, ref: "Task" },
-      link: String,
-      pointsAwarded: Number,
-    },
-  ],
 });
 
 const Leaderboard = mongoose.model("Leaderboard", leaderboardSchema);
+
+// Task submission schema
+const taskSubmissionSchema = new mongoose.Schema({
+  email: { type: String, required: true },
+  taskId: { type: mongoose.Schema.Types.ObjectId, ref: "Task", required: true },
+  link: { type: String, required: true },
+  submittedAt: { type: Date, default: Date.now },
+  pointsAwarded: { type: Number, default: null },
+});
+
+const TaskSubmission = mongoose.model("TaskSubmission", taskSubmissionSchema);
 
 // Admin can upload tasks
 app.post("/api/admin/upload-task", async (req, res) => {
@@ -196,16 +200,16 @@ app.get("/api/tasks", async (req, res) => {
 
 // User submits task with a Google Drive link
 app.post("/api/submit-task", async (req, res) => {
-  const { userId, taskId, link } = req.body;
+  const { email, taskId, link } = req.body;
 
-  if (!userId || !taskId || !link) {
+  if (!email || !taskId || !link) {
     return res
       .status(400)
       .json({ status: "error", message: "Please provide all required fields" });
   }
 
   try {
-    const user = await User.findById(userId);
+    const user = await User.findOne({ email });
     const task = await Task.findById(taskId);
 
     if (!user || !task) {
@@ -214,14 +218,23 @@ app.post("/api/submit-task", async (req, res) => {
         .json({ status: "error", message: "Invalid user or task" });
     }
 
-    // Add submission to leaderboard
-    let leaderboard = await Leaderboard.findOne({ userId: userId });
-    if (!leaderboard) {
-      leaderboard = new Leaderboard({ userId });
+    // Check if a submission already exists for this user and task
+    const existingSubmission = await TaskSubmission.findOne({ email, taskId });
+    if (existingSubmission) {
+      return res.status(400).json({
+        status: "error",
+        message: "You have already submitted this task",
+      });
     }
 
-    leaderboard.submissions.push({ taskId, link, pointsAwarded: 0 }); // Points awarded can be updated by admin
-    await leaderboard.save();
+    // Create a new task submission
+    const newSubmission = new TaskSubmission({
+      email,
+      taskId,
+      link,
+    });
+
+    await newSubmission.save();
 
     res.json({ status: "success", message: "Task submitted successfully" });
   } catch (error) {
@@ -232,35 +245,35 @@ app.post("/api/submit-task", async (req, res) => {
 
 // Admin updates points for a submission
 app.post("/api/admin/update-points", async (req, res) => {
-  const { userId, taskId, pointsAwarded } = req.body;
+  const { email, taskId, pointsAwarded } = req.body;
 
-  if (!userId || !taskId || !pointsAwarded) {
+  if (!email || !taskId || pointsAwarded === undefined) {
     return res
       .status(400)
       .json({ status: "error", message: "Please provide all required fields" });
   }
 
   try {
-    const leaderboard = await Leaderboard.findOne({ userId });
-    if (!leaderboard) {
+    const submission = await TaskSubmission.findOne({ email, taskId });
+    if (!submission) {
       return res
-        .status(400)
-        .json({ status: "error", message: "User not found on leaderboard" });
-    }
-
-    const submission = leaderboard.submissions.find(
-      (sub) => sub.taskId.toString() === taskId
-    );
-    if (submission) {
-      submission.pointsAwarded = pointsAwarded;
-      leaderboard.points += pointsAwarded;
-      await leaderboard.save();
-      res.json({ status: "success", message: "Points updated successfully" });
-    } else {
-      res
         .status(400)
         .json({ status: "error", message: "Submission not found" });
     }
+
+    submission.pointsAwarded = pointsAwarded;
+    await submission.save();
+
+    // Update or create leaderboard entry
+    let leaderboard = await Leaderboard.findOne({ email });
+    if (!leaderboard) {
+      leaderboard = new Leaderboard({ email, points: pointsAwarded });
+    } else {
+      leaderboard.points += pointsAwarded;
+    }
+    await leaderboard.save();
+
+    res.json({ status: "success", message: "Points updated successfully" });
   } catch (error) {
     console.error("Error updating points:", error);
     res.status(500).json({ status: "error", message: "Server error" });
@@ -270,11 +283,23 @@ app.post("/api/admin/update-points", async (req, res) => {
 // Get the leaderboard
 app.get("/api/leaderboard", async (req, res) => {
   try {
-    const leaderboard = await Leaderboard.find({}).populate(
-      "userId",
-      "name email"
+    const leaderboard = await Leaderboard.find({}).sort({ points: -1 }).lean();
+
+    // Fetch user details separately
+    const leaderboardWithDetails = await Promise.all(
+      leaderboard.map(async (entry) => {
+        const user = await User.findOne({ email: entry.email })
+          .select("name college")
+          .lean();
+        return {
+          name: user ? user.name : "Unknown User",
+          college: user ? user.college : "Unknown College",
+          points: entry.points,
+        };
+      })
     );
-    res.json({ status: "success", leaderboard });
+
+    res.json({ status: "success", leaderboard: leaderboardWithDetails });
   } catch (error) {
     console.error("Error fetching leaderboard:", error);
     res.status(500).json({ status: "error", message: "Server error" });
@@ -287,14 +312,18 @@ app.get("/api/profile", async (req, res) => {
     const email = req.query.email;
 
     if (!email) {
-      return res.status(400).json({ status: 'error', message: 'Email is required' });
+      return res
+        .status(400)
+        .json({ status: "error", message: "Email is required" });
     }
 
     // Find the user by their email in the database
-    const user = await User.findOne({ email }).select('-password'); // Exclude the password field
+    const user = await User.findOne({ email }).select("-password"); // Exclude the password field
 
     if (!user) {
-      return res.status(404).json({ status: 'error', message: 'User not found' });
+      return res
+        .status(404)
+        .json({ status: "error", message: "User not found" });
     }
 
     // Return user profile data
