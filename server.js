@@ -13,11 +13,9 @@ app.use(cors());
 app.use(bodyParser.json());
 
 mongoose
-  .connect(
-    "mongodb+srv://rks:bzPyXls67Ifim8yP@cluster0.djwvu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0/new"
-  )
+  .connect("mongodb://localhost:27017/registration_db")
   .then(() => console.log("!!!!!!!!!Database connected!!!!!!!"))
-  .catch((err) => console.error("Database connection failed:", err)); 
+  .catch((err) => console.error("Database connection failed:", err));
 
 // MongoDB Schema and Model
 const userSchema = new mongoose.Schema({
@@ -346,7 +344,20 @@ app.get("/api/profile", async (req, res) => {
   }
 });
 
+app.get("/api/admin/submissions", async (req, res) => {
+  try {
+    const submissions = await TaskSubmission.find({})
+      .populate("taskId", "title")
+      .lean();
+
+    res.json({ status: "success", submissions });
+  } catch (error) {
+    console.error("Error fetching submissions:", error);
+    res.status(500).json({ status: "error", message: "Server error" });
+  }
+});
+
 // Start the server
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`); 
+  console.log(`Server is running on http://localhost:${PORT}`);
 });
