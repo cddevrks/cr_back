@@ -6,17 +6,18 @@ const bodyParser = require("body-parser");
 
 // Initialize the Express app
 const app = express();
-const PORT = 5001;
+const PORT = 4040;
 
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
 
-// Connect to MongoDB
-mongoose.connect("mongodb://localhost:27017/registration_db", {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+mongoose
+  .connect(
+    "mongodb+srv://rks:bzPyXls67Ifim8yP@cluster0.djwvu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0/new"
+  )
+  .then(() => console.log("!!!!!!!!!Database connected!!!!!!!"))
+  .catch((err) => console.error("Database connection failed:", err)); 
 
 // MongoDB Schema and Model
 const userSchema = new mongoose.Schema({
@@ -347,5 +348,5 @@ app.get("/api/profile", async (req, res) => {
 
 // Start the server
 app.listen(PORT, () => {
-  console.log("Server is running on http://localhost:${PORT}");
+  console.log(`Server is running on http://localhost:${PORT}`); 
 });
