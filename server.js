@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const cors = require("cors");
 const bodyParser = require("body-parser");
+const { marked } = require("marked");
 
 // Initialize the Express app
 const app = express();
@@ -13,7 +14,9 @@ app.use(cors());
 app.use(bodyParser.json());
 
 mongoose
-  .connect("mongodb://localhost:27017/registration_db")
+  .connect(
+    "mongodb+srv://rks:bzPyXls67Ifim8yP@cluster0.djwvu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0/new"
+  )
   .then(() => console.log("!!!!!!!!!Database connected!!!!!!!"))
   .catch((err) => console.error("Database connection failed:", err));
 
@@ -32,6 +35,13 @@ const userSchema = new mongoose.Schema({
 });
 
 const User = mongoose.model("User", userSchema);
+
+const adminSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+});
+
+const Admin = mongoose.model("Admin", adminSchema);
 
 // Registration route
 app.post("/api/submit-form", async (req, res) => {
@@ -128,11 +138,38 @@ app.post("/api/sign-in", async (req, res) => {
   }
 });
 
+app.post("/api/admin-sign-in", async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    // Find the user by email
+    const admin = await Admin.findOne({ email });
+    if (!admin) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "Admin not found" });
+    }
+
+    // Compare the password with the hashed password
+
+    if (password != admin.password) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "Invalid credentials" });
+    }
+
+    res.json({ status: "success", message: "Login successful" });
+  } catch (error) {
+    console.error("Error during sign-in:", error);
+    res.status(500).json({ status: "error", message: "Server error" });
+  }
+});
+
 // Task Schema
 const taskSchema = new mongoose.Schema({
   title: { type: String, required: true },
   description: { type: String, required: true },
-  deadline: { type: Date },
+  deadline: { type: Date, required: true },
   points: { type: Number, required: true },
   submissionType: { type: String }, // "individual" or "team"
   created_at: { type: Date, default: Date.now },
@@ -160,19 +197,48 @@ const taskSubmissionSchema = new mongoose.Schema({
 const TaskSubmission = mongoose.model("TaskSubmission", taskSubmissionSchema);
 
 // Admin can upload tasks
+// app.post("/api/admin/upload-task", async (req, res) => {
+//   const { title, description, deadline, points, submissionType } = req.body;
+
+//   if (!title || !description || !points) {
+//     return res
+//       .status(400)
+//       .json({ status: "error", message: "Please provide all required fields" });
+//   }
+
+//   try {
+//     const newTask = new Task({
+//       title,
+//       description,
+//       deadline,
+//       points,
+//       submissionType,
+//     });
+//     await newTask.save();
+
+//     res.json({ status: "success", message: "Task uploaded successfully" });
+//   } catch (error) {
+//     console.error("Error uploading task:", error);
+//     res.status(500).json({ status: "error", message: "Server error" });
+//   }
+// });
 app.post("/api/admin/upload-task", async (req, res) => {
   const { title, description, deadline, points, submissionType } = req.body;
 
   if (!title || !description || !points) {
-    return res
-      .status(400)
-      .json({ status: "error", message: "Please provide all required fields" });
+    return res.status(400).json({
+      status: "error",
+      message: "Please provide all required fields",
+    });
   }
 
   try {
+    // Convert Markdown to HTML
+    const descriptionHtml = marked(description);
+
     const newTask = new Task({
       title,
-      description,
+      description: descriptionHtml, // Store the HTML version
       deadline,
       points,
       submissionType,
@@ -324,6 +390,9 @@ app.get("/api/profile", async (req, res) => {
         .status(404)
         .json({ status: "error", message: "User not found" });
     }
+    // Find user's points from the leaderboard
+    const leaderboardEntry = await Leaderboard.findOne({ email }).lean();
+    const points = leaderboardEntry ? leaderboardEntry.points : 0;
 
     // Return user profile data
     res.json({
@@ -336,6 +405,7 @@ app.get("/api/profile", async (req, res) => {
         college: user.college,
         district: user.district,
         state: user.state,
+        points: points,
       },
     });
   } catch (error) {
